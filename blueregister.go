@@ -6,9 +6,17 @@ import (
 	"time"
 
 	"gopkg.in/mgo.v2/bson"
+	"net/http"
 )
 
 var appPrefix string
+var hitFailing bool
+var hitChannel chan string
+
+func init()  {
+	hitChannel = make(chan string,1000)
+	go internalHit() 
+}
 
 func CheckIn(prefix string) {
 	if len(appPrefix) > 0 {
@@ -58,4 +66,35 @@ func Set(key string, value interface{}) {
 		bson.M{"$set": bson.M{
 			key: value,
 		}})
+}
+
+func Hit(prefix string){
+	hitChannel <- prefix 
+}
+
+func Close(){
+	close(hitChannel)
+}
+
+func internalHit(){
+	for{
+		h:= <- hitChannel
+		if h == ""{
+			break
+		}
+		
+		if hitFailing {
+			continue
+		}
+		
+		_,err:= http.Get("http://localhost:7777/hit?p="+h)
+		if err != nil{
+			hitFailing = true
+			time.Sleep(time.Millisecond *10) 
+			go func(){
+				time.Sleep(time.Second *10) 
+				hitFailing = false
+			}()
+		}
+	}
 }
