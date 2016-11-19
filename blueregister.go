@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/mgo.v2/bson"
 	"net/http"
+	"fmt"
 )
 
 var appPrefix string
@@ -97,4 +98,5 @@ func internalHit(){
 			}()
 		}
 	}
+	fmt.Println("Internal Hit Channel Closed")
 }
