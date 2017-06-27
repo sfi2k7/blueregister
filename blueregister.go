@@ -2,21 +2,28 @@ package blueregister
 
 import (
 	"os"
+	"sync"
 
 	"time"
 
-	"gopkg.in/mgo.v2/bson"
-	"net/http"
 	"fmt"
+	"net/http"
+
+	"github.com/faisal/blueutil"
+	"gopkg.in/mgo.v2/bson"
 )
 
 var appPrefix string
 var hitFailing bool
 var hitChannel chan string
+var logErrorChannel chan string
+var logLock sync.Mutex
+var logSource string
 
-func init()  {
-	hitChannel = make(chan string,1000)
-	go internalHit() 
+func init() {
+	hitChannel = make(chan string, 1000)
+	logLock = sync.Mutex{}
+	go internalHit()
 }
 
 func CheckIn(prefix string) {
@@ -25,6 +32,9 @@ func CheckIn(prefix string) {
 	}
 	appPrefix = prefix
 	conn := newConnection()
+	if conn == nil {
+		return
+	}
 	defer conn.Close()
 	wd, _ := os.Getwd()
 	conn.DB("blue_apps").C("state").Upsert(
@@ -44,6 +54,9 @@ func CheckOut() {
 	}
 
 	conn := newConnection()
+	if conn == nil {
+		return
+	}
 	defer conn.Close()
 
 	conn.DB("blue_apps").C("state").Update(
@@ -60,6 +73,9 @@ func Set(key string, value interface{}) {
 	}
 
 	conn := newConnection()
+	if conn == nil {
+		return
+	}
 	defer conn.Close()
 
 	conn.DB("blue_apps").C("state").Update(
@@ -69,34 +85,74 @@ func Set(key string, value interface{}) {
 		}})
 }
 
-func Hit(prefix string){
-	hitChannel <- prefix 
+func Hit(prefix string) {
+	hitChannel <- prefix
 }
 
-func Close(){
+func Close() {
 	close(hitChannel)
 }
 
-func internalHit(){
-	for{
-		h:= <- hitChannel
-		if h == ""{
+func internalHit() {
+	var lastHitFailed *time.Time
+	for {
+		h := <-hitChannel
+		if h == "" {
 			break
 		}
-		
+
+		if lastHitFailed != nil && hitFailing && lastHitFailed.Before(time.Now().Add(time.Second*-10)) {
+			hitFailing = false
+		}
+
 		if hitFailing {
 			continue
 		}
-		
-		_,err:= http.Get("http://localhost:7777/hit?p="+h)
-		if err != nil{
+
+		_, err := http.Get("http://localhost:7777/hit?p=" + h)
+		if err != nil {
 			hitFailing = true
-			time.Sleep(time.Millisecond *10) 
-			go func(){
-				time.Sleep(time.Second *10) 
-				hitFailing = false
-			}()
+			tm := time.Now()
+			lastHitFailed = &tm
+			time.Sleep(time.Second * 1)
 		}
 	}
 	fmt.Println("Internal Hit Channel Closed")
+}
+
+func SetErrorLogSource(s string) {
+	logSource = s
+}
+
+func LogError(err error) {
+	if err == nil {
+		return
+	}
+
+	LogMsg(err.Error())
+}
+func LogMsg(msg string) {
+	logLock.Lock()
+	defer logLock.Unlock()
+
+	db := newConnection()
+	if db == nil {
+		return
+	}
+
+	defer db.Close()
+
+	item := struct {
+		Id     string    `bson:"_id"`
+		Msg    string    `bson:"msg"`
+		Ts     time.Time `bson:"ts"`
+		Source string    `bson:"source"`
+	}{
+		Id:     blueutil.NewV4(),
+		Msg:    msg,
+		Ts:     time.Now(),
+		Source: logSource,
+	}
+
+	db.DB("blueApps").C("exceptions").Insert(item)
 }
