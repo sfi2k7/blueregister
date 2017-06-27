@@ -155,5 +155,5 @@ func LogMsg(msg string) {
 		Source: logSource,
 	}
 
-	db.DB("blueApps").C("exceptions").Insert(item)
+	db.DB("blue_apps").C("exceptions").Insert(item)
 }
