@@ -13,7 +13,14 @@ var (
 	sessionSync    sync.Mutex
 )
 
+func init() {
+	sessionSync = sync.Mutex{}
+}
+
 func newConnection() *mgo.Session {
+	sessionSync.Lock()
+	defer sessionSync.Unlock()
+
 	if baseConnection == nil {
 		var err error
 		baseConnection, err = mgo.Dial("127.0.0.1")

@@ -136,6 +136,7 @@ func LogMsg(msg string) {
 	defer logLock.Unlock()
 
 	db := newConnection()
+
 	if db == nil {
 		return
 	}
