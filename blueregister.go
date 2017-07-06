@@ -1,12 +1,12 @@
 package blueregister
 
 import (
+	"fmt"
 	"os"
 	"sync"
 
 	"time"
 
-	"fmt"
 	"net/http"
 
 	"github.com/sfi2k7/blueutil"
@@ -17,19 +17,32 @@ var appPrefix string
 var hitFailing bool
 var hitChannel chan string
 var logErrorChannel chan string
+var doneChannel chan bool
 var logLock sync.Mutex
 var logSource string
+var lastHitFailed *time.Time
 
 func init() {
 	hitChannel = make(chan string, 1000)
+	logErrorChannel = make(chan string, 1000)
+	doneChannel = make(chan bool, 1)
+
 	logLock = sync.Mutex{}
-	go internalHit()
+	go internalHit2()
+}
+
+func Close() {
+	doneChannel <- true
+	close(hitChannel)
+	close(logErrorChannel)
+	close(doneChannel)
 }
 
 func CheckIn(prefix string) {
 	if len(appPrefix) > 0 {
 		return
 	}
+
 	appPrefix = prefix
 	conn := newConnection()
 	if conn == nil {
@@ -89,36 +102,76 @@ func Hit(prefix string) {
 	hitChannel <- prefix
 }
 
-func Close() {
-	close(hitChannel)
-}
+func internalHit2() {
+	exitLoop := false
 
-func internalHit() {
-	var lastHitFailed *time.Time
-	for {
-		h := <-hitChannel
-		if h == "" {
+	for !exitLoop {
+		select {
+		case h := <-hitChannel:
+			addHit(h)
+			break
+
+		case k := <-logErrorChannel:
+			logMsg(k)
+			break
+
+		case <-doneChannel:
+			fmt.Println("DONE Channel")
+			exitLoop = true
 			break
 		}
-
-		if lastHitFailed != nil && hitFailing && lastHitFailed.Before(time.Now().Add(time.Second*-10)) {
-			hitFailing = false
-		}
-
-		if hitFailing {
-			continue
-		}
-
-		_, err := http.Get("http://localhost:7777/hit?p=" + h)
-		if err != nil {
-			hitFailing = true
-			tm := time.Now()
-			lastHitFailed = &tm
-			time.Sleep(time.Second * 1)
-		}
 	}
-	fmt.Println("Internal Hit Channel Closed")
+	fmt.Println("Exiting Register Loop")
 }
+
+func addHit(h string) {
+	if h == "" {
+		return
+	}
+
+	if lastHitFailed != nil && hitFailing && lastHitFailed.Before(time.Now().Add(time.Second*-10)) {
+		hitFailing = false
+	}
+
+	if hitFailing {
+		return
+	}
+
+	_, err := http.Get("http://localhost:7777/hit?p=" + h)
+	if err != nil {
+		hitFailing = true
+		tm := time.Now()
+		lastHitFailed = &tm
+		time.Sleep(time.Second * 1)
+	}
+}
+
+// func internalHit() {
+
+// 	for {
+// 		h := <-hitChannel
+// 		if h == "" {
+// 			break
+// 		}
+
+// 		if lastHitFailed != nil && hitFailing && lastHitFailed.Before(time.Now().Add(time.Second*-10)) {
+// 			hitFailing = false
+// 		}
+
+// 		if hitFailing {
+// 			continue
+// 		}
+
+// 		_, err := http.Get("http://localhost:7777/hit?p=" + h)
+// 		if err != nil {
+// 			hitFailing = true
+// 			tm := time.Now()
+// 			lastHitFailed = &tm
+// 			time.Sleep(time.Second * 1)
+// 		}
+// 	}
+// 	fmt.Println("Internal Hit Channel Closed")
+// }
 
 func SetErrorLogSource(s string) {
 	logSource = s
@@ -129,9 +182,18 @@ func LogError(err error) {
 		return
 	}
 
-	LogMsg(err.Error())
+	logErrorChannel <- err.Error()
 }
+
 func LogMsg(msg string) {
+	if msg == "" {
+		return
+	}
+
+	logErrorChannel <- msg
+}
+
+func logMsg(msg string) {
 	logLock.Lock()
 	defer logLock.Unlock()
 
