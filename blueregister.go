@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/faisal/blueutil"
+	"github.com/sfi2k7/blueutil"
 	"gopkg.in/mgo.v2/bson"
 )
 
